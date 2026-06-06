@@ -108,6 +108,7 @@ export const DAEMON_KNOWN_EVENT_TYPE_VALUES = [
   'turn_complete',
   'turn_error',
   'session_rewound',
+  'session_branched',
 ] as const;
 
 const DAEMON_KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<string>(
@@ -635,6 +636,14 @@ export interface DaemonSessionRewoundData {
   [key: string]: unknown;
 }
 
+export interface DaemonSessionBranchedData {
+  sourceSessionId: string;
+  newSessionId: string;
+  displayName: string;
+  originatorClientId?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Fired when `POST /workspace/mcp/servers` succeeds, including both
  * fresh additions and replace-on-existing-name. The event fans out to
@@ -811,6 +820,10 @@ export type DaemonSessionRewoundEvent = DaemonEventEnvelope<
   'session_rewound',
   DaemonSessionRewoundData
 >;
+export type DaemonSessionBranchedEvent = DaemonEventEnvelope<
+  'session_branched',
+  DaemonSessionBranchedData
+>;
 
 export type DaemonAuthEvent =
   | DaemonAuthDeviceFlowStartedEvent
@@ -825,7 +838,8 @@ export type DaemonSessionEvent =
   | DaemonModelSwitchFailedEvent
   | DaemonSessionDiedEvent
   | DaemonSessionClosedEvent
-  | DaemonSessionMetadataUpdatedEvent;
+  | DaemonSessionMetadataUpdatedEvent
+  | DaemonSessionBranchedEvent;
 
 export type DaemonControlEvent =
   | DaemonPermissionRequestEvent
@@ -1073,6 +1087,7 @@ export interface DaemonSessionViewState {
   lastTurnError?: DaemonTurnErrorData;
   rewindCount: number;
   lastRewind?: DaemonSessionRewoundData;
+  lastBranch?: DaemonSessionBranchedData;
 }
 
 /**
@@ -1169,6 +1184,7 @@ export function createDaemonSessionViewState(
     lastFollowupSuggestion: seed.lastFollowupSuggestion,
     rewindCount: seed.rewindCount ?? 0,
     lastRewind: seed.lastRewind,
+    lastBranch: seed.lastBranch,
   };
 }
 
@@ -1355,6 +1371,10 @@ export function asKnownDaemonEvent(
     case 'session_rewound':
       return isSessionRewoundData(event.data)
         ? (event as DaemonSessionRewoundEvent)
+        : undefined;
+    case 'session_branched':
+      return isSessionBranchedData(event.data)
+        ? (event as DaemonSessionBranchedEvent)
         : undefined;
     default:
       return undefined;
@@ -1730,6 +1750,11 @@ export function reduceDaemonSessionEvent(
         ...base,
         rewindCount: base.rewindCount + 1,
         lastRewind: mergeOriginator(event.data, event),
+      };
+    case 'session_branched':
+      return {
+        ...base,
+        lastBranch: mergeOriginator(event.data, event),
       };
     default: {
       const _exhaustive: never = event;
@@ -2468,6 +2493,17 @@ function isMcpServerRemovedData(
   if (typeof value['wasShadowingSettings'] !== 'boolean') return false;
   if (!isNonEmptyString(value['originatorClientId'])) return false;
   return true;
+}
+
+function isSessionBranchedData(
+  value: unknown,
+): value is DaemonSessionBranchedData {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyString(value['sourceSessionId']) &&
+    isNonEmptyString(value['newSessionId']) &&
+    isNonEmptyString(value['displayName'])
+  );
 }
 
 function isPermissionOption(value: unknown): value is DaemonPermissionOption {
