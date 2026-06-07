@@ -1433,10 +1433,13 @@ export function createServeApp(
     const sessionId = requireSessionId(req, res);
     if (sessionId === null) return;
     const body = safeBody(req);
-    let name =
-      typeof body?.['name'] === 'string' ? body['name'] : undefined;
-    if (name && name.length > 200) {
-      name = name.slice(0, 200);
+    let name = typeof body?.['name'] === 'string' ? body['name'] : undefined;
+    if (name) {
+      // eslint-disable-next-line no-control-regex
+      name = name.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+      if (name.length > 200) {
+        name = name.slice(0, 200);
+      }
     }
     const clientId = parseClientIdHeader(req, res);
     if (clientId === null) return;
@@ -1454,11 +1457,9 @@ export function createServeApp(
               // Best-effort cleanup; channel.exited will eventually reap.
             });
         } else {
-          bridge
-            .detachClient(result.sessionId, result.clientId)
-            .catch(() => {
-              // Best-effort cleanup; channel.exited will eventually reap.
-            });
+          bridge.detachClient(result.sessionId, result.clientId).catch(() => {
+            // Best-effort cleanup; channel.exited will eventually reap.
+          });
         }
         return;
       }

@@ -2286,26 +2286,32 @@ export function createAcpSessionBridge(opts: BridgeOptions): AcpSessionBridge {
                   entry.activePromptOriginatorClientId = originatorClientId;
                 }
                 entry.promptActive = true;
-                // Echo the user prompt to the session bus so other SSE-subscribed
-                // clients see the input alongside the agent response.
-                //
-                // The interactive prompt path was the only one not emitting
-                // `user_message_chunk` — `Session#executePrompt` (the agent
-                // side) forwards the prompt directly to the LLM; the cron path
-                // (Session.ts:1402) and `HistoryReplayer` (line 65) emit it
-                // explicitly. Without this echo, multi-client UIs only saw
-                // assistant text from peer prompts — no record of who said what.
-                //
-                // Originator dedup: SDK consumers' `normalizeDaemonEvent` with
-                // `suppressOwnUserEcho: true` filters the echo when
-                // `event.originatorClientId === opts.clientId`. So the
-                // originator's local UI doesn't double-render its own input.
-                //
-                // Multi-modal: one envelope per content block. Non-text blocks
-                // pass through verbatim (the agent's Core multimodal echo is a
-                // for now the common text path is the immediate fix.
-                entry.cancelBroadcast = false;
-                echoPromptToSessionBus(entry, normalized, originatorClientId);
+                try {
+                  // Echo the user prompt to the session bus so other SSE-subscribed
+                  // clients see the input alongside the agent response.
+                  //
+                  // The interactive prompt path was the only one not emitting
+                  // `user_message_chunk` — `Session#executePrompt` (the agent
+                  // side) forwards the prompt directly to the LLM; the cron path
+                  // (Session.ts:1402) and `HistoryReplayer` (line 65) emit it
+                  // explicitly. Without this echo, multi-client UIs only saw
+                  // assistant text from peer prompts — no record of who said what.
+                  //
+                  // Originator dedup: SDK consumers' `normalizeDaemonEvent` with
+                  // `suppressOwnUserEcho: true` filters the echo when
+                  // `event.originatorClientId === opts.clientId`. So the
+                  // originator's local UI doesn't double-render its own input.
+                  //
+                  // Multi-modal: one envelope per content block. Non-text blocks
+                  // pass through verbatim (the agent's Core multimodal echo is a
+                  // for now the common text path is the immediate fix.
+                  entry.cancelBroadcast = false;
+                  echoPromptToSessionBus(entry, normalized, originatorClientId);
+                } catch (echoErr) {
+                  entry.promptActive = false;
+                  delete entry.activePromptOriginatorClientId;
+                  throw echoErr;
+                }
                 const promptPromise = entry.connection
                   .prompt(normalized)
                   .finally(() => {
@@ -2641,6 +2647,8 @@ export function createAcpSessionBridge(opts: BridgeOptions): AcpSessionBridge {
 
       const entry = byId.get(sessionId);
       if (!entry) throw new SessionNotFoundError(sessionId);
+
+      await entry.promptQueue;
       if (entry.promptActive) {
         throw new BranchWhilePromptActiveError(sessionId);
       }
@@ -2687,9 +2695,16 @@ export function createAcpSessionBridge(opts: BridgeOptions): AcpSessionBridge {
         });
       } catch (restoreErr) {
         writeStderrLine(
-          `qwen serve: branchSession resume failed for ${result.newSessionId}, ` +
-            `orphan JSONL may remain: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`,
+          `qwen serve: branchSession resume failed for ${result.newSessionId}, attempting cleanup...`,
         );
+        try {
+          await ci.connection.extMethod(
+            SERVE_CONTROL_EXT_METHODS.sessionClose,
+            { sessionId: result.newSessionId, cwd: boundWorkspace },
+          );
+        } catch {
+          /* best-effort */
+        }
         throw restoreErr;
       }
 
@@ -3627,8 +3642,7 @@ export function createAcpSessionBridge(opts: BridgeOptions): AcpSessionBridge {
         const data = (err as { data?: unknown })?.data;
         if (data && typeof data === 'object' && 'errorKind' in data) {
           const kind = (data as { errorKind: string }).errorKind;
-          const msg =
-            (err as { message?: string })?.message ?? 'Rewind failed';
+          const msg = (err as { message?: string })?.message ?? 'Rewind failed';
           if (kind === 'session_busy') {
             throw new SessionBusyError(sessionId, msg);
           }
@@ -3639,12 +3653,9 @@ export function createAcpSessionBridge(opts: BridgeOptions): AcpSessionBridge {
         throw err;
       }
 
-      const targetTurnIndex =
-        (response['targetTurnIndex'] as number) ?? 0;
-      const filesChanged =
-        (response['filesChanged'] as string[]) ?? [];
-      const filesFailed =
-        (response['filesFailed'] as string[]) ?? [];
+      const targetTurnIndex = (response['targetTurnIndex'] as number) ?? 0;
+      const filesChanged = (response['filesChanged'] as string[]) ?? [];
+      const filesFailed = (response['filesFailed'] as string[]) ?? [];
 
       try {
         entry.events.publish({

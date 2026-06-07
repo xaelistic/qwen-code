@@ -176,6 +176,7 @@ const EXPECTED_STAGE1_FEATURES = [
   'session_rewind',
   'workspace_hooks',
   'session_hooks',
+  'session_branch',
 ] as const;
 
 // Issue #4175 PR 15. `require_auth` is registered but conditionally
@@ -202,7 +203,8 @@ const EXPECTED_REGISTERED_FEATURES = [
       f !== 'non_blocking_prompt' &&
       f !== 'session_rewind' &&
       f !== 'workspace_hooks' &&
-      f !== 'session_hooks',
+      f !== 'session_hooks' &&
+      f !== 'session_branch',
   ),
   'mcp_workspace_pool',
   'mcp_pool_restart',
@@ -219,6 +221,7 @@ const EXPECTED_REGISTERED_FEATURES = [
   'session_rewind',
   'workspace_hooks',
   'session_hooks',
+  'session_branch',
 ] as const;
 
 interface FakeBridgeOpts {
